@@ -1,0 +1,20 @@
+# Build output
+out/
+
+# Rust build artifacts (kept outside the submodule on purpose)
+target/
+easytier/target/
+
+# Auto-downloaded tools (protoc)
+.tools/
+
+# Build artifacts
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+
+# Misc
+*.log
+*.tmp

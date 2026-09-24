@@ -1,0 +1,10 @@
+#!/bin/bash
+args=()
+for a in "$@"; do
+  case "$a" in
+    --target=armv7-unknown-linux-musleabihf|--target=arm-unknown-linux-musleabihf)
+      a="--target=arm-linux-musleabihf" ;;
+  esac
+  args+=("$a")
+done
+exec zig c++ -target arm-linux-musleabihf "${args[@]}"

@@ -1,0 +1,12 @@
+#!/bin/bash
+# cc-rs 会把 Rust triple (armv7-unknown-linux-musleabihf) 原样传给 zig，
+# 而 zig 只认 GNU-ish 的 arm-linux-musleabihf，这里做一次改写。
+args=()
+for a in "$@"; do
+  case "$a" in
+    --target=armv7-unknown-linux-musleabihf|--target=arm-unknown-linux-musleabihf)
+      a="--target=arm-linux-musleabihf" ;;
+  esac
+  args+=("$a")
+done
+exec zig cc -target arm-linux-musleabihf "${args[@]}"

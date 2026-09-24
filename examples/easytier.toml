@@ -1,0 +1,46 @@
+# EasyTier 客户端配置示例
+#
+# 用法（本仓库产出的 easytier-core / easytier-cli）:
+#   ./easytier-core --config /userdata/easytier/easytier.toml
+#
+# 警告：不要在 easytier 仓库里照抄 easytier-contrib/easytier-android-jni/
+# example_config.toml —— 那份是**过时的扁平格式**（inst_name / network / peers），
+# 现在的加载器只认下面的 [network_identity] 表 + [[peer]] 数组，写错会静默不生效
+# （表现为节点起来了、TUN 也建了，但永远不连对端）。
+
+instance_name = "flexkvm"
+hostname = "kvm-office"
+
+# 虚拟 IP。留空或不写则用 dhcp 自动分配（见下）
+ipv4 = "10.144.144.10"
+
+# 监听端口。不写则用默认 11010(tcp/udp)、11011(wg/ws)、11012(quic/wss)、11013(faketcp)
+listeners = ["tcp://0.0.0.0:11010", "udp://0.0.0.0:11010"]
+
+# 自动获取虚拟 IP（与 ipv4 二选一；本仓库的 client 变体编入了 dhcp-ipv4）
+# dhcp = true
+
+# 本机要暴露给其它节点的子网（点对网）
+# [[proxy_network]]
+# cidr = "192.168.1.0/24"
+
+[network_identity]
+# 网络名与密钥 = 组网的凭证，所有节点必须一致
+network_name = "my-kvm-network"
+network_secret = "换成一段长随机串"
+
+# 初始对端（写域名或 IP 都行：普通域名解析走系统 getaddrinfo，
+# 不依赖 endpoint-discovery 特性）
+#
+# 可填官方/自建共享节点；注意 public.easytier.cn 在部分网络下已解析不到，
+# 生产建议自建共享节点（无参数启动 easytier-core 即可当公共服务器，不需要 root）
+[[peer]]
+uri = "tcp://your-shared-node.example.com:11010"
+
+# [flags]
+# 关闭 P2P、强制走中继
+# disable_p2p = true
+# 延迟优先
+# latency_first = true
+# 出口节点
+# enable_exit_node = true
