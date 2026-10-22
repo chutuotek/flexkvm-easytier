@@ -22,7 +22,8 @@
 #   4. proto3 的显式 optional 标签要求 protoc >= 3.12（Ubuntu 20.04 自带 3.6.1
 #      会失败）。scripts/ensure-protoc.sh 负责检测/下载，通常不用管。
 #
-# 上游 2.7.0 尚未打 tag（最新 tag 是 v2.6.4），所以锁定 commit 保证可复现。
+# 上游已发 v2.7.0（tag 8b7f1f01）。此处仍显式钉 commit 而不钉 tag：
+# tag 可被上游移动，commit 不会。EASYTIER_COMMIT 必须与 v2.7.0 指向同一提交。
 #
 
 SHELL := /bin/bash
@@ -36,7 +37,7 @@ CURRENT_DIR := $(shell pwd)
 
 # Upstream version / pinned commit
 EASYTIER_VERSION ?= 2.7.0
-EASYTIER_COMMIT ?= 0a783c8e04561d1fee4e3e922e9576402d5bfea3
+EASYTIER_COMMIT ?= 8b7f1f0196edb5b580829ed5f135050fb5853478
 EASYTIER_SRC := $(CURDIR)/easytier
 
 # Rust toolchain (workspace 的 rust-version = "1.95"，低于它会被 cargo 拒绝)
@@ -60,6 +61,7 @@ VARIANT ?= client
 #   smoltcp          用户态 TCP/IP 栈
 #   tun              TUN 网卡（连带 linux-netlink）
 #   cli              easytier-cli + management（→ web-client + logging）
+#   tcp-hole-punch   TCP 打洞（UDP 被封时的退路，设备实测仅 +58 KB）
 #
 # 刻意不含：
 #   quic / websocket / kcp / faketcp / wireguard  —— 非 TCP/UDP 传输，砍掉约 60% 体积
@@ -67,8 +69,7 @@ VARIANT ?= client
 #   endpoint-discovery                            —— 只影响 DNS TXT/SRV 记录与"按域名
 #                                                    自动发现对端"；普通域名解析走系统
 #                                                    getaddrinfo，不依赖它（+1.14 MiB）
-#   tcp-hole-punch                                —— 零依赖，UDP 被封时是退路，可按需加回
-CLIENT_FEATURES ?= aes-gcm,dhcp-ipv4,proxy-cidr-monitor,smoltcp,tun,cli
+CLIENT_FEATURES ?= aes-gcm,dhcp-ipv4,proxy-cidr-monitor,smoltcp,tun,management,tcp-hole-punch
 
 # upx 压缩（与 tailscale/zerotier/frp 一致）；UPX=0 关闭
 UPX ?= 1
@@ -77,7 +78,8 @@ ifeq ($(VARIANT),client)
   CARGO_PKG := easytier
   CARGO_PROFILE := mini
   CARGO_EXTRA := --no-default-features --features "$(CLIENT_FEATURES)"
-  BINARIES := easytier-core easytier-cli
+  # 只产出 core；CLI 由 make cli 用 C 版补齐
+  BINARIES := easytier-core
 else ifeq ($(VARIANT),mini)
   CARGO_PKG := easytier-mini
   CARGO_PROFILE := mini
