@@ -35,6 +35,14 @@ version_ok() {
 	return 1
 }
 
+# 0. 自我保护：PROTOC 指向本脚本自身时，下面 version_ok "$PROTOC" 会执行
+#    `ensure-protoc.sh --version`，而子进程又继承同一个 PROTOC，导致无限递归 fork。
+self="$(readlink -f "$0")"
+if [ -n "${PROTOC:-}" ] && [ "$(readlink -f "$PROTOC" 2>/dev/null)" = "$self" ]; then
+	echo "warning: PROTOC 指向 ensure-protoc.sh 自身，已忽略；应写 PROTOC=\$(ensure-protoc.sh) 取其输出" >&2
+	unset PROTOC
+fi
+
 # 1. 显式指定
 if [ -n "${PROTOC:-}" ]; then
 	if version_ok "$PROTOC"; then
