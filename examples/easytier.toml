@@ -1,7 +1,7 @@
 # EasyTier 客户端配置示例
 #
 # 用法（本仓库产出的 easytier-core / easytier-cli）:
-#   ./easytier-core --config /userdata/easytier/easytier.toml
+#   ./easytier-core --config-file /userdata/easytier/easytier.toml
 #
 # 警告：不要在 easytier 仓库里照抄 easytier-contrib/easytier-android-jni/
 # example_config.toml —— 那份是**过时的扁平格式**（inst_name / network / peers），
