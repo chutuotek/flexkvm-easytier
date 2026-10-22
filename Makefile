@@ -69,7 +69,39 @@ VARIANT ?= client
 #   endpoint-discovery                            —— 只影响 DNS TXT/SRV 记录与"按域名
 #                                                    自动发现对端"；普通域名解析走系统
 #                                                    getaddrinfo，不依赖它（+1.14 MiB）
+#
+# 注意 socks5 / vpn-portal：默认集不含 socks5、wireguard 两个 feature，但
+# TOML 里的 socks5_proxy / [[port_forward]] / [vpn_portal_config] 仍会被**接受**：
+#   - socks5_proxy / port_forward：静默不生效（不监听、不报错）
+#   - vpn_portal_config：启动时明确报 "no host adapter exists" 退出
+# 不要以为有 smoltcp 就有 socks5 网关——两者是独立 feature。
+#
+# **cli 已移除**：官方 easytier-cli 改由本目录 cli/easytier-cli.c 提供 C 版
+# （体积 30 KB vs 官方 1.1 MB，功能覆盖 peer/route/node info/stun）。
+# 但 `management` 必须保留——easytier-core 的 required-features 要它，
+# 且 C 版 CLI 正是通过它暴露的本地 RPC（127.0.0.1:15888）通信。
 CLIENT_FEATURES ?= aes-gcm,dhcp-ipv4,proxy-cidr-monitor,smoltcp,tun,management,tcp-hole-punch
+
+# ---- C 控制台（替代官方 easytier-cli）----
+#
+# 官方 easytier-cli 是独立二进制（源码 crate `easytier` 的 bin target），
+# 所以能真正删掉——上面的 CLIENT_FEATURES 去掉了 `cli` 特性后 cargo 不再
+# 产出它，省下约 1.1 MB（UPX 后）。
+#
+# C 版的通信不走 HTTP：easytier 的控制面是自定义 RPC（16 字节二进制头 +
+# protobuf），详见 cli/easytier-cli.c 的文件头注释。
+CLI_ENABLE ?= 1
+LIB_DIR    := $(CURDIR)/../lib
+LIB_A      := $(LIB_DIR)/out/libvpnctl.a
+CLI_BIN    := $(OUTPUT_DIR)/easytier-cli
+CLI_SRC    := $(CURDIR)/cli/easytier-cli.c
+CLI_CFLAGS := -std=c17 -O2 -Wall -Wextra -DET_VERSION='"$(EASYTIER_VERSION)"'
+CLI_LDLIBS := -ljansson
+# C 版用 uClibc 工具链（动态链接，与 musl 静态的 core 并存没冲突：
+# 设备上两者都能跑，jansson 设备已有）
+CROSS_COMPILE ?= arm-rockchip830-linux-uclibcgnueabihf-
+CC_CLI := $(CROSS_COMPILE)gcc
+ET_SYSROOT ?= $(shell ls -d /root/rv1106/flexkvm_sdk/sysdrv/source/buildroot/buildroot-*/output/host/arm-buildroot-linux-uclibcgnueabihf/sysroot 2>/dev/null | head -1)
 
 # upx 压缩（与 tailscale/zerotier/frp 一致）；UPX=0 关闭
 UPX ?= 1
@@ -106,9 +138,9 @@ export AR_armv7_unknown_linux_musleabihf := $(CURDIR)/toolchain/armv7-musl-ar
 export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER := $(RUST_LLD)
 export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_AR := $(CURDIR)/toolchain/armv7-musl-ar
 
-.PHONY: all clean clone build install info help check-tools
+.PHONY: all clean clone build cli lib install info help check-tools
 
-all: info check-tools clone build install
+all: info check-tools clone build cli install
 	@echo "Build $(PKG_NAME) done"
 
 info:
@@ -160,7 +192,21 @@ build: check-tools clone
 			-p $(CARGO_PKG) $(CARGO_EXTRA) \
 			--target $(TARGET) -j$(JOBS)
 
-install: build
+lib:
+	@$(MAKE) -C $(LIB_DIR)
+
+cli: lib
+	@echo "Building C console (easytier-cli)..."
+	@mkdir -p $(OUTPUT_DIR)
+	@$(CC_CLI) $(CLI_CFLAGS) \
+		$(if $(ET_SYSROOT),--sysroot=$(ET_SYSROOT) -I$(ET_SYSROOT)/usr/include) \
+		-I$(LIB_DIR)/include \
+		$(CLI_SRC) $(LIB_A) \
+		$(if $(ET_SYSROOT),-L$(ET_SYSROOT)/usr/lib) \
+		$(CLI_LDLIBS) -o $(CLI_BIN)
+	@echo "  -> $(CLI_BIN)"
+
+install: build cli
 	@echo "Installing to $(OUTPUT_DIR)/ ..."
 	@mkdir -p $(OUTPUT_DIR)
 	@for b in $(BINARIES); do \
@@ -175,6 +221,9 @@ ifeq ($(UPX),1)
 		echo "  upx not found, skipping compression"; \
 	fi
 endif
+	@# 注意：CLI 现在就叫 easytier-cli（与官方同名），这里**不能**再
+	@# rm 它——那会把刚生成的产物删掉。早期带 -c 后缀的遗留文件已清理完毕。
+	@test -f $(CLI_BIN) && { which $(CROSS_COMPILE)strip >/dev/null 2>&1 && $(CROSS_COMPILE)strip $(CLI_BIN) || true; } || true
 	@echo ""
 	@echo "Installed files:"
 	@ls -lh $(OUTPUT_DIR)/
