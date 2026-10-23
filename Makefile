@@ -62,13 +62,21 @@ VARIANT ?= client
 #   tun              TUN 网卡（连带 linux-netlink）
 #   cli              easytier-cli + management（→ web-client + logging）
 #   tcp-hole-punch   TCP 打洞（UDP 被封时的退路，设备实测仅 +58 KB）
+#   endpoint-discovery  **控制台模式必需**：控制台下发的 peer 地址是
+#                    https://api.console.easytier.net/api/v1/peer-resolve/...，
+#                    解析它走的正是这个 feature。缺了它 core 每次
+#                    "connect to peer error: endpoint discovery is disabled"，
+#                    表现为控制台显示在线、有虚拟 IP，但 peer 恒为 0、ping 不通
 #
 # 刻意不含：
 #   quic / websocket / kcp / faketcp / wireguard  —— 非 TCP/UDP 传输，砍掉约 60% 体积
 #   zstd / upnp / socks5 / icmp-proxy / magic-dns —— 与 KVM 场景无关
-#   endpoint-discovery                            —— 只影响 DNS TXT/SRV 记录与"按域名
-#                                                    自动发现对端"；普通域名解析走系统
-#                                                    getaddrinfo，不依赖它（+1.14 MiB）
+# 注意 endpoint-discovery **不在**"刻意不含"里：早期评估认为它"只影响 DNS
+# TXT/SRV 与按域名自动发现对端，普通解析走 getaddrinfo"，但那个判断漏了
+# 控制台模式 —— config-server 下发的 peer 地址就是 https://.../peer-resolve/...
+# 形式的 URL，解析它必须要有这个 feature。
+# 实测体积代价（UPX 后）：1.92 MB → 2.34 MB，即 +0.42 MB —— 远小于早期
+# 估算的 1.14 MiB（那个数字是未压缩的增量）。
 #
 # 注意 socks5 / vpn-portal：默认集不含 socks5、wireguard 两个 feature，但
 # TOML 里的 socks5_proxy / [[port_forward]] / [vpn_portal_config] 仍会被**接受**：
@@ -80,7 +88,7 @@ VARIANT ?= client
 # （体积 30 KB vs 官方 1.1 MB，功能覆盖 peer/route/node info/stun）。
 # 但 `management` 必须保留——easytier-core 的 required-features 要它，
 # 且 C 版 CLI 正是通过它暴露的本地 RPC（127.0.0.1:15888）通信。
-CLIENT_FEATURES ?= aes-gcm,dhcp-ipv4,proxy-cidr-monitor,smoltcp,tun,management,tcp-hole-punch
+CLIENT_FEATURES ?= aes-gcm,dhcp-ipv4,proxy-cidr-monitor,smoltcp,tun,management,tcp-hole-punch,endpoint-discovery
 
 # ---- C 控制台（替代官方 easytier-cli）----
 #
@@ -102,6 +110,24 @@ CLI_LDLIBS := -ljansson
 CROSS_COMPILE ?= arm-rockchip830-linux-uclibcgnueabihf-
 CC_CLI := $(CROSS_COMPILE)gcc
 ET_SYSROOT ?= $(shell ls -d /root/rv1106/flexkvm_sdk/sysdrv/source/buildroot/buildroot-*/output/host/arm-buildroot-linux-uclibcgnueabihf/sysroot 2>/dev/null | head -1)
+
+# ---- 上游补丁（产品化改动）----
+#
+# 与 netbird 的 patch/ 同机制：patch/*.patch 在 clone 之后、cargo build 之前
+# 应用到 submodule 工作树。之所以必须走补丁而不能直接改 submodule 里的文件：
+# clone 目标每次都会 `git checkout` 到钉住的 commit，手改会被还原（踩过）。
+#
+# 当前只有一个补丁：
+#   0001-version-semver-only  版本号只保留 X.Y.Z，去掉 "-<git短hash>" 后缀
+#
+# PATCH=0 可关闭（编上游原样，用于对照）。
+PATCH ?= 1
+ifeq ($(PATCH),1)
+  PATCHES := $(sort $(wildcard $(CURDIR)/patch/*.patch))
+else
+  PATCHES :=
+endif
+PATCH_COUNT := $(words $(PATCHES))
 
 # upx 压缩（与 tailscale/zerotier/frp 一致）；UPX=0 关闭
 UPX ?= 1
@@ -153,6 +179,7 @@ info:
 	@echo "Rust: $(RUST_TOOLCHAIN)  Target: $(TARGET)"
 	@echo "Source: $(EASYTIER_SRC)"
 	@echo "Output Dir: $(OUTPUT_DIR)"
+	@echo "Patch: $(PATCH) (patches: $(PATCH_COUNT))"
 	@echo "UPX: $(UPX)"
 ifeq ($(VARIANT),client)
 	@echo "Features: $(CLIENT_FEATURES)"
@@ -183,6 +210,17 @@ clone:
 		{ echo "错误：无法切到 $(EASYTIER_COMMIT)，请先 git submodule update --init --force easytier"; exit 1; }
 
 build: check-tools clone
+	@# 每次构建都把 submodule 还原到干净状态再打补丁。
+	@# 不能只用 `git checkout -- .`：它只还原**已跟踪**文件，而补丁若新增
+	@# 了未跟踪文件会留下来，与还原出的原文件冲突（同 netbird 的教训）。
+	@echo "Resetting source tree..."
+	@git -C $(EASYTIER_SRC) checkout -q -- . 2>/dev/null || true
+	@git -C $(EASYTIER_SRC) clean -fdq
+	@for p in $(PATCHES); do \
+		echo "Applying: $$(basename $$p)"; \
+		git -C $(EASYTIER_SRC) apply --ignore-whitespace "$$p" || exit 1; \
+	done
+	@if [ -z "$(PATCHES)" ]; then echo "(PATCH=0：不打补丁，编上游原样)"; fi
 	@echo "Building $(CARGO_PKG) [$(VARIANT)] ..."
 	@cd $(EASYTIER_SRC) && \
 		CARGO_TARGET_DIR=$(CARGO_TARGET_DIR) \
@@ -246,6 +284,7 @@ help:
 	@echo "Variables:"
 	@echo "  VARIANT=client|mini|full  - what to build (default: client)"
 	@echo "  UPX=0                     - skip upx compression"
+	@echo "  PATCH=0                   - build upstream as-is (no patches)"
 	@echo "  RUST_TOOLCHAIN=1.95       - rustup toolchain"
 	@echo "  PROTOC=/path/to/protoc    - override protoc"
 	@echo "  CLIENT_FEATURES=...       - override cargo feature set (VARIANT=client)"
