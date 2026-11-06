@@ -1,0 +1,26 @@
+diff --git a/easytier/src/common/constants.rs b/easytier/src/common/constants.rs
+index 5262bb71..fbc6207b 100644
+--- a/easytier/src/common/constants.rs
++++ b/easytier/src/common/constants.rs
+@@ -11,9 +11,15 @@ pub const HMAC_SECRET_DIGEST: bool = false;
+ 
+ pub const WIN_SERVICE_WORK_DIR_REG_KEY: &str = "SOFTWARE\\EasyTier\\Service\\WorkDir";
+ 
+-pub const EASYTIER_VERSION: &str = git_version::git_version!(
+-    args = ["--abbrev=8", "--always", "--dirty=~"],
+-    prefix = concat!(env!("CARGO_PKG_VERSION"), "-"),
+-    suffix = "",
+-    fallback = env!("CARGO_PKG_VERSION")
+-);
++// 产品口径：版本号只保留语义版本（X.Y.Z），不带 git 短 hash 后缀。
++//
++// 上游用 git_version! 把 CARGO_PKG_VERSION 与 commit 拼成 "2.7.0-8b7f1f01"，
++// 这个串会流到三处：
++//   1. easytier-core --version / easytier-cli --version 的输出
++//   2. NodeInfo.version（管理 RPC 的 ShowNodeInfo 响应）
++//   3. RoutePeerInfo.version（经 peer_rpc 发给对端，对端表里显示）
++// 前端与 app 更新面都要拿它跟 ver.json 的 version（打包时写的就是 2.7.0）
++// 比较，带后缀会让"同一个版本"看起来不同，界面上也多一长串噪音。
++//
++// 该字段**不参与协议兼容性判断**（上游只用于展示），去掉后缀是安全的。
++pub const EASYTIER_VERSION: &str = env!("CARGO_PKG_VERSION");
